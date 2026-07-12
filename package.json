@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "dev:api": "tsx watch src/server.ts",
     "dev:web": "vite --host 127.0.0.1",
+    "dev:ocr": "uv run --with-requirements ocr-sidecar/requirements.txt uvicorn --app-dir ocr-sidecar app:app --host 127.0.0.1 --port 4188",
     "dev:all": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
@@ -28,6 +29,7 @@
     "nanoid": "^5.1.16",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "sharp": "^0.35.3",
     "vite": "^8.1.4"
   },
   "devDependencies": {

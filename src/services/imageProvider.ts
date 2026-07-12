@@ -361,6 +361,7 @@ async function mockImage(input: ImageProviderInput): Promise<ImageProviderResult
 }
 
 export async function callImageProvider(input: ImageProviderInput): Promise<ImageProviderResult> {
-  if (input.mock || !config.image.apiKey) return mockImage(input);
+  if (input.mock) return mockImage(input);
+  if (!config.image.apiKey) throw new Error("Live image generation is unavailable because the provider API key is not configured");
   return input.inputAssets.length > 0 ? editImage(input) : generateImage(input);
 }

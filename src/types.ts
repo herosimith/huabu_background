@@ -1,7 +1,53 @@
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 export type JobType = "original" | "composed";
-export type AssetType = "upload" | "original" | "composed" | "vector";
+export type AssetType = "upload" | "original" | "composed" | "vector" | "corrected";
 export type PromptSource = "template" | "openai-chat" | "anthropic";
+export type TextValidationStatus = "pending" | "passed" | "needs_review" | "unavailable";
+
+export interface TextPoint {
+  x: number;
+  y: number;
+}
+
+export interface OcrRegion {
+  id: string;
+  text: string;
+  confidence: number;
+  polygon: TextPoint[];
+}
+
+export interface TextValidationCheck {
+  expectedText: string;
+  detectedText?: string;
+  confidence?: number;
+  regionId?: string;
+  matched: boolean;
+}
+
+export interface TextValidationRecord {
+  status: TextValidationStatus;
+  expectedTexts: string[];
+  regions: OcrRegion[];
+  checks: TextValidationCheck[];
+  sourceWidth?: number;
+  sourceHeight?: number;
+  scale?: number;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TextCorrection {
+  expectedText: string;
+  regionId?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  textColor: string;
+  coverColor: string;
+}
 
 export interface MatchedPromptSummary {
   id: string;
@@ -22,6 +68,7 @@ export interface PromptRecord {
   brief: string;
   imagePrompt: string;
   negativePrompt: string;
+  requiredVisibleTexts: string[];
   source: PromptSource;
   matchedPromptIds?: string[];
   matchedPrompts?: MatchedPromptSummary[];
@@ -52,6 +99,10 @@ export interface JobRecord {
   quality: string;
   model: string;
   inputAssetIds: string[];
+  requiredVisibleTexts?: string[];
+  textValidation?: TextValidationRecord;
+  textCorrections?: TextCorrection[];
+  correctedAssets?: AssetRecord[];
   mock?: boolean;
   providerTaskId?: string;
   requestJson?: unknown;

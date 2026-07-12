@@ -12,6 +12,15 @@ function numberEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function localServiceUrl(value: string): string {
+  const url = new URL(value);
+  const localHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  if (url.protocol !== "http:" || !localHosts.has(url.hostname)) {
+    throw new Error("OCR_SERVICE_URL must point to a local http sidecar");
+  }
+  return value.replace(/\/+$/, "");
+}
+
 export const config = {
   rootDir,
   port: numberEnv("PORT", 4177),
@@ -50,5 +59,15 @@ export const config = {
     apiKey: process.env.ANTHROPIC_API_KEY || "",
     baseUrl: (process.env.ANTHROPIC_BASE_URL || "https://apic.aksearch.site").replace(/\/+$/, ""),
     model: process.env.ANTHROPIC_MODEL || ""
+  },
+  ocr: {
+    serviceUrl: localServiceUrl(process.env.OCR_SERVICE_URL || "http://127.0.0.1:4188"),
+    timeoutMs: numberEnv("OCR_REQUEST_TIMEOUT_MS", 25_000),
+    maxInputEdge: numberEnv("OCR_MAX_INPUT_EDGE", 2048),
+    minConfidence: Math.min(1, Number(process.env.OCR_MIN_CONFIDENCE || 0.7) || 0.7)
+  },
+  textRender: {
+    fontFamily: process.env.TEXT_RENDER_FONT_FAMILY || "Hiragino Sans GB, Noto Sans CJK SC, Microsoft YaHei, sans-serif",
+    maxInputPixels: numberEnv("TEXT_RENDER_MAX_INPUT_PIXELS", 40_000_000)
   }
 };

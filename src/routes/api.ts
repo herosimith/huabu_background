@@ -2,14 +2,16 @@ import express from "express";
 import multer from "multer";
 import { config } from "../config.js";
 import { HttpError } from "../lib/errors.js";
+import { imageSizeValidationError } from "../lib/imageSize.js";
 import { store } from "../store/jsonStore.js";
 import { saveBufferAsset } from "../services/assetService.js";
 import { createJob } from "../services/jobService.js";
 import { createPrompt } from "../services/promptService.js";
 import { resolvePromptLibraryImage } from "../services/promptLibrary.js";
+import { applyTextCorrections } from "../services/textCorrectionService.js";
+import { validateJobText } from "../services/textValidationService.js";
 
 const allowedJobTypes = new Set(["original", "composed"]);
-const allowedImageSizes = new Set(["1024x1024", "1024x1536", "1536x1024", "1792x1024", "1024x1792", "auto"]);
 const allowedImageQualities = new Set(["low", "medium", "high", "auto"]);
 const allowedUploadTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -39,7 +41,10 @@ apiRouter.post("/prompt", async (req, res, next) => {
       customerText,
       businessType: req.body.businessType,
       material: req.body.material,
-      style: req.body.style
+      style: req.body.style,
+      requiredVisibleTexts: Array.isArray(req.body.requiredVisibleTexts)
+        ? req.body.requiredVisibleTexts.map((value: unknown) => String(value || ""))
+        : undefined
     });
     res.json({ prompt });
   } catch (error) {
@@ -102,13 +107,16 @@ apiRouter.post("/jobs", async (req, res, next) => {
     if (!allowedJobTypes.has(type)) {
       throw new HttpError(400, `type must be one of: ${Array.from(allowedJobTypes).join(", ")}`);
     }
-    const size = String(req.body.size || config.image.size);
-    if (!allowedImageSizes.has(size)) {
-      throw new HttpError(400, `size must be one of: ${Array.from(allowedImageSizes).join(", ")}`);
-    }
+    const size = String(req.body.size || config.image.size).trim();
+    const sizeError = imageSizeValidationError(size);
+    if (sizeError) throw new HttpError(400, sizeError);
     const quality = String(req.body.quality || config.image.quality);
     if (!allowedImageQualities.has(quality)) {
       throw new HttpError(400, `quality must be one of: ${Array.from(allowedImageQualities).join(", ")}`);
+    }
+    const mock = req.body.mock === true;
+    if (!mock && !config.image.apiKey) {
+      throw new HttpError(503, "Live image generation is unavailable because the provider API key is not configured");
     }
     const inputAssetIds: string[] = Array.isArray(req.body.inputAssetIds)
       ? Array.from(new Set(req.body.inputAssetIds.map((id: unknown) => String(id).trim()).filter(Boolean)))
@@ -128,7 +136,7 @@ apiRouter.post("/jobs", async (req, res, next) => {
       quality,
       model: req.body.model,
       inputAssetIds,
-      mock: req.body.mock === true
+      mock
     });
     res.status(202).json({ job });
   } catch (error) {
@@ -141,6 +149,40 @@ apiRouter.get("/jobs/:id", async (req, res, next) => {
     const job = await store.getJob(req.params.id);
     if (!job) throw new HttpError(404, "Job not found");
     res.json({ job });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post("/jobs/:id/text-validation", async (req, res, next) => {
+  try {
+    const job = await store.getJob(req.params.id);
+    if (!job) throw new HttpError(404, "Job not found");
+    if (job.status !== "succeeded") throw new HttpError(409, "Text validation requires a completed job");
+    const textValidation = await validateJobText(job);
+    const updatedJob = await store.saveJob({ ...job, textValidation, updatedAt: new Date().toISOString() });
+    res.json({ job: updatedJob });
+  } catch (error) {
+    next(error);
+  }
+});
+
+apiRouter.post("/jobs/:id/text-corrections", async (req, res, next) => {
+  try {
+    const job = await store.getJob(req.params.id);
+    if (!job) throw new HttpError(404, "Job not found");
+    if (job.status !== "succeeded") throw new HttpError(409, "Text correction requires a completed job");
+    const sourceAsset = job.assets.find((asset) => asset.type === job.type);
+    if (!sourceAsset) throw new HttpError(409, "Job has no correctable source asset");
+    const corrections = Array.isArray(req.body.corrections) ? req.body.corrections : [];
+    const result = await applyTextCorrections({ job, sourceAsset, corrections });
+    const updatedJob = await store.saveJob({
+      ...job,
+      textCorrections: result.corrections,
+      correctedAssets: [...(job.correctedAssets || []), result.asset].slice(-5),
+      updatedAt: new Date().toISOString()
+    });
+    res.json({ job: updatedJob, asset: result.asset });
   } catch (error) {
     next(error);
   }

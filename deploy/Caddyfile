@@ -1,0 +1,37 @@
+{
+  admin off
+  auto_https off
+}
+
+:80 {
+  encode zstd gzip
+
+  header {
+    Referrer-Policy "same-origin"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+  }
+
+  route {
+    @image_exact path /image
+    redir @image_exact /image/ 308
+
+    handle /image/api/* {
+      uri strip_prefix /image
+      reverse_proxy 127.0.0.1:4177
+    }
+
+    handle /image/storage/* {
+      uri strip_prefix /image
+      reverse_proxy 127.0.0.1:4177
+    }
+
+    handle_path /image/* {
+      root * /srv
+      try_files {path} /index.html
+      file_server
+    }
+
+    respond 404
+  }
+}

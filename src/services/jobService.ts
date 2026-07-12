@@ -107,11 +107,13 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
   const type = input.type === "composed" ? "composed" : "original";
   let prompt = input.prompt?.trim() || "";
   let negativePrompt = input.negativePrompt?.trim() || "";
+  let requiredVisibleTexts: string[] = [];
   if (input.promptId) {
     const promptRecord = await store.getPrompt(input.promptId);
     if (!promptRecord) throw new HttpError(404, "promptId not found");
     prompt ||= promptRecord.imagePrompt;
     negativePrompt ||= promptRecord.negativePrompt;
+    requiredVisibleTexts = promptRecord.requiredVisibleTexts || [];
   }
   if (!prompt) throw new HttpError(400, "prompt is required");
   if (type === "composed" && config.image.apiKey && !input.inputAssetIds?.length) {
@@ -130,6 +132,7 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
     quality: input.quality || config.image.quality,
     model: input.model || config.image.model,
     inputAssetIds: input.inputAssetIds || [],
+    requiredVisibleTexts,
     mock: Boolean(input.mock),
     assets: [],
     createdAt: now,

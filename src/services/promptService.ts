@@ -10,6 +10,18 @@ interface PromptInput {
   businessType?: string;
   material?: string;
   style?: string;
+  requiredVisibleTexts?: string[];
+}
+
+interface TimelineRow {
+  year: string;
+  event: string;
+}
+
+interface EnterpriseTimeline {
+  heading?: string;
+  subtitle?: string;
+  rows: TimelineRow[];
 }
 
 const DEFAULT_NEGATIVE_PROMPT = [
@@ -21,8 +33,17 @@ const DEFAULT_NEGATIVE_PROMPT = [
   "vector graphics",
   "logo presentation board",
   "blurred text",
+  "garbled Chinese text",
   "incorrect characters",
+  "wrong Chinese characters",
+  "missing character strokes",
+  "duplicated text",
   "random English words",
+  "random numbers",
+  "dense small text",
+  "low-contrast text",
+  "text occlusion",
+  "complex background behind text",
   "neon signs",
   "cluttered street",
   "overexposed lighting",
@@ -33,6 +54,40 @@ const DEFAULT_NEGATIVE_PROMPT = [
 
 function normalizeCustomerText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function parseEnterpriseTimeline(value: string): EnterpriseTimeline | null {
+  const lines = value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const rows: TimelineRow[] = [];
+  const years = new Set<string>();
+  let firstRowIndex = -1;
+
+  for (const [index, line] of lines.entries()) {
+    const match = line.match(/^(?:[-*•]\s*)?((?:19|20)\d{2})(?:年)?(?:\s+|[：:]\s*|[—–-]\s*)(.+?)\s*$/);
+    if (!match) continue;
+    const year = match[1];
+    const event = match[2].trim();
+    if (event.length < 4 || event.length > 240 || years.has(year)) continue;
+    if (firstRowIndex < 0) firstRowIndex = index;
+    years.add(year);
+    rows.push({ year, event });
+  }
+
+  if (rows.length < 3 || firstRowIndex < 0) return null;
+  const headingLines = lines.slice(0, firstRowIndex).filter((line) => (
+    line.length <= 36
+    && !/^年份/.test(line)
+    && !/^从(?:19|20)\d{2}/.test(line)
+    && !/(?:关键事实|生成一个|材质|尺寸)/.test(line)
+  ));
+  const heading = headingLines.find((line) => /(?:企业|公司|品牌).*(?:历程|大事记)|(?:发展|历史).*(?:历程|大事记)/.test(line));
+  const subtitle = headingLines.find((line) => line !== heading && /(?:来时之路|薪火|新征程|发展之路)/.test(line));
+
+  return { heading, subtitle, rows: rows.slice(0, 12) };
 }
 
 function extractStoreName(value: string): string | undefined {
@@ -46,10 +101,95 @@ function normalizeSignText(value: string): string {
   return value.toLowerCase().replace(/[\s·・.。"'“”‘’\-_:：,，;；]/g, "");
 }
 
-function ensureStoreName(prompt: string, storeName?: string): string {
-  if (!storeName) return prompt;
-  if (normalizeSignText(prompt).includes(normalizeSignText(storeName))) return prompt;
-  return `${prompt} The primary sign text must read exactly "${storeName}" and must not invent or copy any other brand name.`;
+function extractRequestedVisibleTexts(value: string): string[] {
+  const texts: string[] = [];
+  const storeName = extractStoreName(value);
+  if (storeName) texts.push(storeName);
+
+  const quotedText = /(?:“([^”]{1,80})”|"([^"]{1,80})"|「([^」]{1,80})」|『([^』]{1,80})』)/g;
+  for (const match of value.matchAll(quotedText)) {
+    const text = match.slice(1).find(Boolean)?.trim();
+    if (text) texts.push(text);
+  }
+
+  const seen = new Set<string>();
+  return texts.filter((text) => {
+    const normalized = normalizeSignText(text);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  }).slice(0, 8);
+}
+
+function normalizeRequiredVisibleTexts(values?: string[]): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  return values
+    .map((value) => String(value || "").trim().replace(/\s+/g, " "))
+    .filter((value) => value.length > 0 && value.length <= 80)
+    .filter((value) => {
+      const normalized = normalizeSignText(value);
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function requiredVisibleTexts(input: PromptInput, customerText: string, timeline?: EnterpriseTimeline | null): string[] {
+  const explicit = normalizeRequiredVisibleTexts(input.requiredVisibleTexts);
+  if (explicit.length) return explicit;
+  return extractRequestedVisibleTexts(customerText).filter((text) => {
+    const normalized = normalizeSignText(text);
+    return !timeline?.rows.some((row) => normalizeSignText(row.event).includes(normalized));
+  });
+}
+
+function timelineWallContract(timeline?: EnterpriseTimeline | null): string {
+  if (!timeline) return "";
+  const rows = timeline.rows
+    .map((row, index) => `${index + 1}. ${row.year}：${row.event}`)
+    .join("\n");
+  return [
+    "企业历程墙内容规则（最高优先级）：",
+    `这是一块横向企业历程文化墙，不是只标年份的装饰画。必须按时间顺序呈现下面 ${timeline.rows.length} 个节点，年份与里程碑事件一一对应、完整可见。`,
+    timeline.heading ? `主标题必须原样显示为「${timeline.heading}」。` : "",
+    timeline.subtitle ? `副标题必须原样显示为「${timeline.subtitle}」。` : "",
+    "每个节点都必须同时保留年份和对应的完整中文事件。禁止将事件替换成图标、圆点、空白吊牌、缩略词或占位文字；不得遗漏、合并、改写或重排任何节点。",
+    "采用横向 3.1m × 1.4m PVC 异形企业文化墙的正视设计，可使用双层时间轴和紧凑的两至三行事件说明。空间不足时优先减少装饰、留白和背景纹样，不得删减事件文字；所有事件文字必须清晰、可读、对比度高。",
+    "以下企业历程数据必须逐条原样呈现：",
+    rows
+  ].filter(Boolean).join("\n");
+}
+
+function visibleTextContract(texts: string[], timeline?: EnterpriseTimeline | null): string {
+  if (!texts.length && !timeline) {
+    return "The customer supplied no exact display text. Do not invent readable words, letters, numbers, placeholder copy, or random logos.";
+  }
+
+  const exactTextList = texts
+    .map((text, index) => `${index + 1}. 「${text.replace(/[「」]/g, "")}」`)
+    .join(" ");
+  return [
+    texts.length ? `必须原样显示以下文字，不得改写、翻译、增删或重复：${exactTextList}` : "不设置独立的品牌或招牌文字；可读文字必须来自下方企业历程数据。",
+    timeline
+      ? "除上述文字和下方企业历程数据外，不生成任何额外文字、英文、数字、占位符或随机 Logo。"
+      : "只显示以上客户指定文字，不生成任何额外文字、英文、数字、占位符或随机 Logo。",
+    "文字排版要求：主要文字使用清晰粗体和足够大的字号，字符笔画完整，字间距宽松，对比度强。",
+    "把文字放在干净、低纹理的留白区域，不得被人物、装饰、反光或建筑结构遮挡。",
+    timeline
+      ? "企业历程允许使用紧凑的多节点版式；每条里程碑都是必需内容，不套用最多四个信息模块的限制。"
+      : "画面最多四个信息模块，装饰元素不得遮挡文字。"
+  ].join(" ");
+}
+
+function ensureVisibleTextContract(prompt: string, texts: string[], timeline?: EnterpriseTimeline | null): string {
+  return [prompt.trim(), visibleTextContract(texts, timeline), timelineWallContract(timeline)].filter(Boolean).join("\n\n");
+}
+
+function mergeNegativePrompt(value?: string): string {
+  const supplied = value?.trim();
+  return supplied ? `${supplied}, ${DEFAULT_NEGATIVE_PROMPT}` : DEFAULT_NEGATIVE_PROMPT;
 }
 
 function extractReferenceSignTexts(matches: PromptLibraryMatch[]): string[] {
@@ -73,7 +213,7 @@ function extractReferenceSignTexts(matches: PromptLibraryMatch[]): string[] {
 
 function replaceUnrequestedReferenceText(text: string, input: PromptInput, matches: PromptLibraryMatch[]): string {
   const customerText = normalizeCustomerText(input.customerText);
-  const storeName = extractStoreName(customerText);
+  const storeName = parseEnterpriseTimeline(input.customerText) ? undefined : extractStoreName(customerText);
   let output = text;
   for (const referenceText of extractReferenceSignTexts(matches)) {
     const referenceNormalized = normalizeSignText(referenceText);
@@ -110,9 +250,13 @@ function buildTemplatePrompt(input: PromptInput, matches: PromptLibraryMatch[] =
   const businessType = input.businessType?.trim() || "门头招牌";
   const material = input.material?.trim() || "白色墙面、黑色发光字";
   const style = input.style?.trim() || "高级、干净、适合夜间亮灯展示";
-  const storeName = extractStoreName(customerText);
+  const timeline = parseEnterpriseTimeline(input.customerText);
+  const storeName = timeline ? undefined : extractStoreName(customerText);
+  const requestedVisibleTexts = requiredVisibleTexts(input, customerText, timeline);
   const references = referenceSummary(matches);
-  const signText = storeName
+  const signText = timeline
+    ? "This is an enterprise history wall. Treat the supplied timeline data as the primary readable content, not as decorative dates or a storefront sign."
+    : storeName
     ? `The sign text must read exactly "${storeName}", with no extra words, no misspellings, and no invented brand text.`
     : "If the customer did not provide a brand name, avoid inventing random readable brand text; keep any signage abstract or unreadable.";
   const brief = [
@@ -144,8 +288,9 @@ function buildTemplatePrompt(input: PromptInput, matches: PromptLibraryMatch[] =
     material,
     style,
     brief,
-    imagePrompt: replaceUnrequestedReferenceText(ensureStoreName(imagePrompt, storeName), input, matches),
+    imagePrompt: ensureVisibleTextContract(replaceUnrequestedReferenceText(imagePrompt, input, matches), requestedVisibleTexts, timeline),
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
+    requiredVisibleTexts: requestedVisibleTexts,
     source: "template",
     matchedPromptIds: matchedPrompts.map((match) => match.id),
     matchedPrompts
@@ -182,7 +327,9 @@ async function tryOpenAIChatPrompt(input: PromptInput, matches: PromptLibraryMat
   if (!config.chat.apiKey || !config.chat.model) return null;
 
   const customerText = normalizeCustomerText(input.customerText);
-  const storeName = extractStoreName(customerText);
+  const timeline = parseEnterpriseTimeline(input.customerText);
+  const storeName = timeline ? undefined : extractStoreName(customerText);
+  const requestedVisibleTexts = requiredVisibleTexts(input, customerText, timeline);
   const matchedPrompts = matches.map(toMatchedPromptSummary);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.chat.timeoutMs);
@@ -199,7 +346,10 @@ async function tryOpenAIChatPrompt(input: PromptInput, matches: PromptLibraryMat
           "Required JSON keys: brief, imagePrompt, negativePrompt, businessType, material, style.",
           "brief must be Chinese and operational for an advertising designer.",
           "imagePrompt should be precise, visual, production-ready, and generate one final deliverable advertising image, not a UI screenshot, prompt board, grid, or comparison image.",
-          storeName ? `The primary sign or brand text must be exactly: ${storeName}` : "If no brand text is provided, do not invent readable brand text.",
+          timeline
+            ? "When enterpriseTimelineRows are supplied, treat every year-event pair as mandatory readable content. Preserve all rows in chronological order, never replace events with icons or placeholders, and do not apply a four-module limit."
+            : storeName ? `The primary sign or brand text must be exactly: ${storeName}` : "If no brand text is provided, do not invent readable brand text.",
+          "Keep customer-supplied visible text short, large, high-contrast, and isolated from complex textures. Never invent extra readable text.",
           "Preserve the customer's business type, material constraints, and style direction."
         ].join("\n")
       },
@@ -210,6 +360,10 @@ async function tryOpenAIChatPrompt(input: PromptInput, matches: PromptLibraryMat
           businessType: input.businessType,
           material: input.material,
           style: input.style,
+          requiredVisibleTexts: requestedVisibleTexts,
+          enterpriseTimelineRows: timeline?.rows || [],
+          enterpriseTimelineHeading: timeline?.heading,
+          enterpriseTimelineSubtitle: timeline?.subtitle,
           selectedAdvertisingPromptReferences: matches.map((match) => ({
             id: match.id,
             title: match.title,
@@ -242,7 +396,7 @@ async function tryOpenAIChatPrompt(input: PromptInput, matches: PromptLibraryMat
     const brief = stringField(parsed.brief);
     const rawImagePrompt = stringField(parsed.imagePrompt);
     if (!brief || !rawImagePrompt) return null;
-    const imagePrompt = replaceUnrequestedReferenceText(ensureStoreName(rawImagePrompt, storeName), input, matches);
+    const imagePrompt = ensureVisibleTextContract(replaceUnrequestedReferenceText(rawImagePrompt, input, matches), requestedVisibleTexts, timeline);
 
     return {
       customerText,
@@ -251,7 +405,8 @@ async function tryOpenAIChatPrompt(input: PromptInput, matches: PromptLibraryMat
       style: stringField(parsed.style) || input.style?.trim(),
       brief,
       imagePrompt,
-      negativePrompt: stringField(parsed.negativePrompt) || DEFAULT_NEGATIVE_PROMPT,
+      negativePrompt: mergeNegativePrompt(stringField(parsed.negativePrompt)),
+      requiredVisibleTexts: requestedVisibleTexts,
       source: "openai-chat",
       matchedPromptIds: matchedPrompts.map((match) => match.id),
       matchedPrompts
