@@ -4,6 +4,7 @@ import { nowIso } from "../lib/time.js";
 import { store } from "../store/jsonStore.js";
 import type { DatabaseShape, UserRecord, UserRole, UserStatus } from "../types.js";
 import { hashPassword, publicUser } from "./authService.js";
+import { getActiveCreditRule } from "./creditService.js";
 
 const roles = new Set<UserRole>(["admin", "designer", "reviewer"]);
 const statuses = new Set<UserStatus>(["active", "disabled"]);
@@ -68,7 +69,12 @@ export async function createManagedUser(input: Record<string, unknown>, operator
   if (nickname.length < 2 || nickname.length > 40) throw new HttpError(400, "昵称需为 2-40 个字符");
   const email = normalizeEmail(input.email);
   const phone = normalizePhone(input.phone);
-  const creditBalance = Math.max(0, Math.floor(Number(input.creditBalance) || 0));
+  const activeRule = await getActiveCreditRule();
+  const requestedInitialBalance = input.creditBalance === undefined ? activeRule.signupGrant : Number(input.creditBalance);
+  if (!Number.isInteger(requestedInitialBalance) || requestedInitialBalance < 0 || requestedInitialBalance > 1_000_000) {
+    throw new HttpError(400, "初始积分必须是 0-1000000 的整数");
+  }
+  const creditBalance = requestedInitialBalance;
   const now = nowIso();
   const user: UserRecord = {
     id: `user_${nanoid(12)}`,

@@ -14,7 +14,9 @@
     "build:web": "vite build",
     "test:integration": "tsx scripts/integration-smoke.ts",
     "test:users": "tsx scripts/user-management-smoke.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test:credits": "tsx scripts/credit-cost-smoke.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.client.json"
   },
   "keywords": [],
   "author": "",

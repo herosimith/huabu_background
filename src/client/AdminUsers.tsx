@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, CircleDollarSign, Edit3, Loader2, Plus, Search, ShieldCheck, UserCheck, UserRound, UserX, WalletCards, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleDollarSign, Edit3, Loader2, Plus, Search, UserCheck, UserRound, UserX, WalletCards, X } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { requestJson } from "./api";
 import type { AuthUser } from "./LoginView";
+import { AdminPageHeader, KpiStrip } from "./admin/AdminPrimitives";
 
 interface CreditTransaction {
   id: string;
@@ -80,14 +81,8 @@ export function AdminUsers({ currentUserId }: { currentUserId: string }) {
 
   return (
     <section className="users-page">
-      <header className="users-heading">
-        <div><span className="eyebrow"><ShieldCheck size={15} /> 运营控制台</span><h1>用户与权限</h1><p>管理画布成员、角色、生成额度与账号状态。</p></div>
-        <button className="primary" onClick={() => setDialog({ kind: "create" })}><Plus size={17} /> 新增用户</button>
-      </header>
-
-      <div className="user-stats">
-        {statItems.map((item) => <article key={item.label}><item.icon size={19} /><div><span>{item.label}</span><strong>{item.value.toLocaleString()}</strong><small>{item.detail}</small></div></article>)}
-      </div>
+      <AdminPageHeader eyebrow="成员与权限" title="用户管理" description="管理画布成员、角色、生成额度与账号状态。" action={<button className="primary" onClick={() => setDialog({ kind: "create" })}><Plus size={17} /> 新增用户</button>} />
+      <KpiStrip items={statItems} />
 
       <section className="users-table-section">
         <div className="user-toolbar">

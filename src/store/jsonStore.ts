@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { config } from "../config.js";
-import type { AssetRecord, CreditTransactionRecord, DatabaseShape, JobRecord, PromptRecord, UserRecord } from "../types.js";
+import type { AssetRecord, CreditRuleRecord, CreditTransactionRecord, DatabaseShape, JobRecord, PromptRecord, TopupIntentRecord, UserRecord } from "../types.js";
 import { ensureDir } from "../lib/fs.js";
 
 const dbPath = path.join(config.dataDir, "db.json");
@@ -12,7 +12,9 @@ const emptyDb: DatabaseShape = {
   jobs: [],
   assets: [],
   users: [],
-  creditTransactions: []
+  creditTransactions: [],
+  creditRules: [],
+  topupIntents: []
 };
 
 let writeQueue = Promise.resolve();
@@ -27,7 +29,9 @@ async function readDb(): Promise<DatabaseShape> {
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
       assets: Array.isArray(parsed.assets) ? parsed.assets : [],
       users: Array.isArray(parsed.users) ? parsed.users : [],
-      creditTransactions: Array.isArray(parsed.creditTransactions) ? parsed.creditTransactions : []
+      creditTransactions: Array.isArray(parsed.creditTransactions) ? parsed.creditTransactions : [],
+      creditRules: Array.isArray(parsed.creditRules) ? parsed.creditRules : [],
+      topupIntents: Array.isArray(parsed.topupIntents) ? parsed.topupIntents : []
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -235,5 +239,42 @@ export const store = {
 
   async listCreditTransactions(userId: string): Promise<CreditTransactionRecord[]> {
     return (await readDb()).creditTransactions.filter((item) => item.userId === userId);
+  },
+
+  async listAllCreditTransactions(): Promise<CreditTransactionRecord[]> {
+    return (await readDb()).creditTransactions;
+  },
+
+  async ensureCreditRule(rule: CreditRuleRecord): Promise<CreditRuleRecord> {
+    return updateDb((db) => {
+      const active = db.creditRules.find((item) => item.active);
+      if (active) return active;
+      db.creditRules.unshift(rule);
+      return rule;
+    });
+  },
+
+  async listCreditRules(): Promise<CreditRuleRecord[]> {
+    return (await readDb()).creditRules;
+  },
+
+  async publishCreditRule(rule: CreditRuleRecord): Promise<CreditRuleRecord> {
+    return updateDb((db) => {
+      rule.version = Math.max(0, ...db.creditRules.map((item) => item.version)) + 1;
+      db.creditRules.forEach((item) => { item.active = false; });
+      db.creditRules.unshift(rule);
+      return rule;
+    });
+  },
+
+  async createTopupIntent(intent: TopupIntentRecord): Promise<TopupIntentRecord> {
+    return updateDb((db) => {
+      db.topupIntents.unshift(intent);
+      return intent;
+    });
+  },
+
+  async listTopupIntents(): Promise<TopupIntentRecord[]> {
+    return (await readDb()).topupIntents;
   }
 };

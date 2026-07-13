@@ -46,6 +46,8 @@ npm run dev:web
 Open `http://127.0.0.1:5173/image/`. The Vite frontend proxies `/api` and
 `/storage` to the backend on `http://127.0.0.1:4177`. Set
 `VITE_API_TARGET=http://127.0.0.1:<port>` when testing against an isolated API.
+The canvas stays at `/image/`; the independent administration console is at
+`/image/admin/` and does not embed the canvas.
 
 Run both from a fresh terminal:
 
@@ -95,6 +97,14 @@ retained and the corrected output is saved separately.
 - `GET /api/admin/users/:id`
 - `PATCH /api/admin/users/:id`
 - `POST /api/admin/users/:id/credits`
+- `GET /api/credits/summary`
+- `GET /api/credits/transactions`
+- `POST /api/credits/topup-intents`
+- `GET /api/admin/overview`
+- `GET /api/admin/credit-rules`
+- `PUT /api/admin/credit-rules`
+- `GET /api/admin/credit-transactions`
+- `GET /api/admin/topup-intents`
 
 All endpoints except health and login require the signed HttpOnly session
 cookie. Admin endpoints require the `admin` role. Designers can create and edit
@@ -109,11 +119,19 @@ role filters, account creation/editing, soft-disable, credit adjustment, and a
 30-entry credit ledger. Passwords use Node's `scrypt`; plaintext passwords and
 password hashes are never returned by the API.
 
-Live image jobs consume `GENERATION_CREDIT_COST` credits when queued and refund
-the same ledger amount if the job fails. Mock jobs do not consume credits. The
-JSON store serializes balance changes and ledger writes through one update
-queue so concurrent adjustments cannot create a negative balance or lose a
-transaction.
+The first startup seeds a versioned credit rule from `GENERATION_CREDIT_COST`.
+Administrators then publish signup, standard generation, high-quality, and
+high-resolution costs from the credit-rule page. Live image jobs use the active
+server-side version when queued and refund the same ledger amount if the job
+fails. Mock jobs do not consume credits. The JSON store serializes rule
+publishing, balance changes, and ledger writes through one update queue so
+concurrent operations preserve one active rule and cannot create a negative
+balance or lose a transaction.
+
+Users can inspect their current balance and personal ledger from the canvas.
+The recharge action is intentionally a reserved interface: it creates a
+`pending` top-up intent for administrators to view, but never changes balance
+or writes a credit transaction until a payment integration is implemented.
 
 ## MVP Flow
 

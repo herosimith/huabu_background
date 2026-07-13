@@ -13,6 +13,7 @@ import { validateJobText } from "../services/textValidationService.js";
 import { authRouter } from "./auth.js";
 import { adminRouter } from "./admin.js";
 import { canAccessOwner, requireAuth, requireCanvasEditor } from "../middleware/auth.js";
+import { creditsRouter } from "./credits.js";
 
 const allowedJobTypes = new Set(["original", "composed"]);
 const allowedImageQualities = new Set(["low", "medium", "high", "auto"]);
@@ -39,6 +40,7 @@ apiRouter.get("/health", (_req, res) => {
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/admin", adminRouter);
 apiRouter.use(requireAuth);
+apiRouter.use("/credits", creditsRouter);
 
 apiRouter.post("/prompt", requireCanvasEditor, async (req, res, next) => {
   try {
@@ -151,7 +153,15 @@ apiRouter.post("/jobs", requireCanvasEditor, async (req, res, next) => {
       mock,
       userId: req.authUser!.id
     });
-    res.status(202).json({ job });
+    const owner = await store.getUser(req.authUser!.id);
+    res.status(202).json({
+      job,
+      credits: {
+        balanceAfter: owner?.creditBalance ?? 0,
+        charged: job.creditsConsumed || 0,
+        ruleVersion: job.creditRuleVersion
+      }
+    });
   } catch (error) {
     next(error);
   }

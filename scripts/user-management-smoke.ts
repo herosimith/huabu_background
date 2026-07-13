@@ -32,6 +32,20 @@ const login = await expectStatus("/api/auth/login", 200, {
 if (login.user.role !== "admin" || !cookie) throw new Error("Admin login did not create an authenticated session");
 const adminCookie = cookie;
 
+const rulesBefore = await expectStatus("/api/admin/credit-rules", 200);
+const publishedRule = await expectStatus("/api/admin/credit-rules", 200, {
+  method: "PUT",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ signupGrant: 20, standardGeneration: 2, highQualitySurcharge: 1, highResolutionSurcharge: 3 })
+});
+if (publishedRule.activeRule.version <= rulesBefore.activeRule.version || publishedRule.activeRule.costs.highResolutionSurcharge !== 3) {
+  throw new Error("Credit rule publishing did not create a new active version");
+}
+const rulesAfter = await expectStatus("/api/admin/credit-rules", 200);
+if (rulesAfter.versions.filter((rule: any) => rule.active).length !== 1) {
+  throw new Error("Credit rule publishing did not preserve exactly one active version");
+}
+
 const unique = Date.now();
 const memberEmail = `designer-${unique}@adcraft.test`;
 const created = await expectStatus("/api/admin/users", 201, {
@@ -107,8 +121,22 @@ await expectStatus("/api/auth/login", 200, {
   body: JSON.stringify({ email: memberEmail, password: "DesignerPassword123" })
 });
 await expectStatus("/api/admin/users", 403);
+await expectStatus("/api/admin/credit-rules", 403);
 await expectStatus(`/api/jobs/${job.job.id}`, 403);
 await expectStatus(`/api/prompts/${prompt.prompt.id}`, 403);
+const memberCreditsBefore = await expectStatus("/api/credits/summary", 200);
+if (memberCreditsBefore.balance !== 20 || memberCreditsBefore.transactions.some((item: any) => item.userId !== memberId)) {
+  throw new Error("Personal credit summary leaked another user or returned a stale balance");
+}
+const topup = await expectStatus("/api/credits/topup-intents", 202, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ requestedCredits: 300, note: "联调充值意向" })
+});
+const memberCreditsAfter = await expectStatus("/api/credits/summary", 200);
+if (topup.intent.status !== "pending" || memberCreditsAfter.balance !== memberCreditsBefore.balance || memberCreditsAfter.transactions.length !== memberCreditsBefore.transactions.length) {
+  throw new Error("Topup intent changed balance or wrote a credit transaction");
+}
 
 cookie = "";
 await expectStatus("/api/auth/login", 200, {
@@ -123,6 +151,16 @@ await expectStatus("/api/prompt", 403, {
 });
 
 cookie = adminCookie;
+const globalLedger = await expectStatus(`/api/admin/credit-transactions?userId=${memberId}`, 200);
+if (!globalLedger.transactions.length || globalLedger.transactions.some((item: any) => item.userId !== memberId) || globalLedger.summary.net !== 20) {
+  throw new Error("Admin global ledger filter or summary is incorrect");
+}
+const topups = await expectStatus(`/api/admin/topup-intents?search=${encodeURIComponent(memberEmail)}`, 200);
+if (!topups.intents.some((item: any) => item.id === topup.intent.id) || topups.summary.requestedCredits < 300) {
+  throw new Error("Admin topup intent view did not expose the pending intent");
+}
+const overview = await expectStatus("/api/admin/overview", 200);
+if (overview.pendingTopups < 1 || overview.totalUsers < 3) throw new Error("Admin overview did not include credits and topups");
 await expectStatus(`/api/admin/users/${memberId}`, 200, {
   method: "PATCH",
   headers: { "content-type": "application/json" },
@@ -136,4 +174,4 @@ await expectStatus("/api/auth/login", 403, {
   body: JSON.stringify({ email: memberEmail, password: "DesignerPassword123" })
 });
 
-console.log(JSON.stringify({ ok: true, adminId: login.user.id, memberId, checked: ["auth", "admin-guard", "role-guard", "reviewer-read-only", "create", "duplicate", "search", "filters", "stats", "credits", "ledger", "self-protection", "ownership", "cross-user-denial", "disable"] }, null, 2));
+console.log(JSON.stringify({ ok: true, adminId: login.user.id, memberId, checked: ["auth", "admin-guard", "role-guard", "reviewer-read-only", "create", "duplicate", "search", "filters", "stats", "credit-rules", "personal-ledger", "global-ledger", "topup-no-balance-mutation", "admin-overview", "credits", "self-protection", "ownership", "cross-user-denial", "disable"] }, null, 2));

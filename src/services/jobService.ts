@@ -6,6 +6,7 @@ import { store } from "../store/jsonStore.js";
 import type { AssetRecord, JobRecord, JobType } from "../types.js";
 import { callImageProvider } from "./imageProvider.js";
 import { saveBase64ImageAsset, saveRemoteImageAsset } from "./assetService.js";
+import { calculateCreditCost, getActiveCreditRule } from "./creditService.js";
 
 interface CreateJobInput {
   type: string;
@@ -125,6 +126,7 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
   }
 
   const now = nowIso();
+  const activeCreditRule = await getActiveCreditRule();
   const job: JobRecord = {
     id: `job_${nanoid(12)}`,
     type,
@@ -139,11 +141,12 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
     userId: input.userId,
     requiredVisibleTexts,
     mock: Boolean(input.mock),
+    creditRuleVersion: activeCreditRule.version,
     assets: [],
     createdAt: now,
     updatedAt: now
   };
-  const creditCost = job.mock ? 0 : config.auth.generatedJobCost;
+  const creditCost = calculateCreditCost(activeCreditRule, job);
   try {
     await store.createJobForUser(job, creditCost);
   } catch (error) {

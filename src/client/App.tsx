@@ -1,8 +1,9 @@
-import { AlertTriangle, CheckCircle2, Copy, Download, Expand, Eye, EyeOff, ImagePlus, Loader2, LogOut, Palette, RotateCcw, ScanText, Send, Sparkles, Type, Upload, Users, Wand2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Coins, Copy, Download, Expand, Eye, EyeOff, ImagePlus, Loader2, LogOut, Palette, RotateCcw, ScanText, Send, Settings2, Sparkles, Type, Upload, Wand2, X } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { AdminUsers } from "./AdminUsers";
 import { appUrl, requestJson } from "./api";
+import { CreditDrawer, type CreditSummary } from "./CreditDrawer";
 import { AuthUser, LoginView } from "./LoginView";
+import { AdminApp } from "./admin/AdminApp";
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed";
 type JobType = "original" | "composed";
@@ -98,6 +99,11 @@ interface JobRecord {
   textValidation?: TextValidationRecord;
   textCorrections?: TextCorrection[];
   correctedAssets?: AssetRecord[];
+}
+
+interface JobCreateResponse {
+  job: JobRecord;
+  credits: { balanceAfter: number; charged: number; ruleVersion?: number };
 }
 
 interface StepState {
@@ -224,10 +230,13 @@ function GenerationLoading({ title, detail }: { title: string; detail: string })
   );
 }
 
-export function App() {
+function CanvasApp() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeView, setActiveView] = useState<"canvas" | "users">("canvas");
+  const [creditBalance, setCreditBalance] = useState(0);
+  const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
+  const [creditDrawerOpen, setCreditDrawerOpen] = useState(false);
+  const [creditPulse, setCreditPulse] = useState<"debit" | "refund" | "">("");
   const [customerText, setCustomerText] = useState(defaultNeed);
   const [requiredVisibleTextInput, setRequiredVisibleTextInput] = useState("");
   const [businessType, setBusinessType] = useState("门头招牌");
@@ -256,10 +265,22 @@ export function App() {
 
   useEffect(() => {
     void requestJson<{ user: AuthUser }>("/api/auth/me")
-      .then((response) => setAuthUser(response.user))
+      .then((response) => { setAuthUser(response.user); setCreditBalance(response.user.creditBalance); })
       .catch(() => setAuthUser(null))
       .finally(() => setAuthLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    void refreshCredits();
+    const timer = window.setInterval(() => { void refreshCredits(); }, 30_000);
+    const handleFocus = () => { void refreshCredits(); };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [authUser?.id]);
 
   const steps: StepState[] = useMemo(() => [
     { label: "AE 需求整理", detail: prompt ? "已生成标准 brief" : "把客户口述转成标准 brief", state: prompt ? "done" : busy ? "working" : "idle" },
@@ -278,9 +299,17 @@ export function App() {
       : vectorAsset?.url ? appUrl(vectorAsset.url) : undefined;
   const textValidation = activeImageJob?.textValidation;
   const showingCorrectedImage = Boolean(activeImageJob?.correctedAssets?.length) && !showSourceImage;
-  const visibleTextChecks = textValidation?.checks || (activeImageJob?.requiredVisibleTexts || []).map((expectedText) => ({ expectedText, matched: false }));
+  const visibleTextChecks: TextValidationCheck[] = textValidation?.checks || (activeImageJob?.requiredVisibleTexts || []).map((expectedText) => ({ expectedText, matched: false }));
   const storeName = useMemo(() => extractStoreName(customerText), [customerText]);
   const canGenerate = authUser?.role !== "reviewer" && !busy && !uploading && Boolean(customerText.trim());
+  const estimatedCreditCost = useMemo(() => {
+    if (runMode === "mock" || !creditSummary) return 0;
+    const match = imageSize.match(/^(\d+)x(\d+)$/);
+    const pixels = match ? Number(match[1]) * Number(match[2]) : 0;
+    return creditSummary.activeRule.costs.standardGeneration
+      + (imageQuality === "high" ? creditSummary.activeRule.costs.highQualitySurcharge : 0)
+      + (pixels > 2560 * 1440 ? creditSummary.activeRule.costs.highResolutionSurcharge : 0);
+  }, [creditSummary, imageQuality, imageSize, runMode]);
   const jobPrompt = polishedPromptText?.trim() || undefined;
   const generationLoading = useMemo(() => {
     if (!prompt) {
@@ -466,6 +495,30 @@ export function App() {
     }
   }
 
+  function applyCreditCharge(response: JobCreateResponse) {
+    setCreditBalance(response.credits.balanceAfter);
+    if (response.credits.charged > 0) {
+      setCreditPulse("debit");
+      window.setTimeout(() => setCreditPulse(""), 900);
+    }
+  }
+
+  async function refreshCredits() {
+    try {
+      const response = await requestJson<CreditSummary>("/api/credits/summary");
+      setCreditSummary(response);
+      setCreditBalance((previous) => {
+        if (response.balance > previous) {
+          setCreditPulse("refund");
+          window.setTimeout(() => setCreditPulse(""), 900);
+        }
+        return response.balance;
+      });
+    } catch {
+      // A later authenticated request will surface any session or network error.
+    }
+  }
+
   async function handleGenerate() {
     setBusy(true);
     setError("");
@@ -489,7 +542,7 @@ export function App() {
       setPolishedPromptText(promptResponse.prompt.imagePrompt);
       const generatedPrompt = promptResponse.prompt.imagePrompt;
 
-      const originalResponse = await requestJson<{ job: JobRecord }>("/api/jobs", {
+      const originalResponse = await requestJson<JobCreateResponse>("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -501,13 +554,15 @@ export function App() {
           mock: runMode === "mock"
         })
       });
+      applyCreditCharge(originalResponse);
       setOriginalJob(originalResponse.job);
       const finalOriginal = await pollJob(originalResponse.job.id, setOriginalJob);
+      await refreshCredits();
       if (finalOriginal.status === "failed") throw new Error(finalOriginal.error || "广告原图生成失败");
       void requestTextValidation(finalOriginal, true);
 
       if (uploadAsset) {
-        const composedResponse = await requestJson<{ job: JobRecord }>("/api/jobs", {
+        const composedResponse = await requestJson<JobCreateResponse>("/api/jobs", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -520,8 +575,10 @@ export function App() {
             mock: runMode === "mock"
           })
         });
+        applyCreditCharge(composedResponse);
         setComposedJob(composedResponse.job);
         const finalComposed = await pollJob(composedResponse.job.id, setComposedJob);
+        await refreshCredits();
         if (finalComposed.status === "failed") throw new Error(finalComposed.error || "环境效果图生成失败");
         void requestTextValidation(finalComposed, true);
       }
@@ -537,7 +594,9 @@ export function App() {
       });
       setVectorAsset(vectorResponse.asset);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成失败");
+      const message = err instanceof Error ? err.message : "生成失败";
+      setError(message);
+      if (message.includes("积分不足")) setCreditDrawerOpen(true);
     } finally {
       setBusy(false);
     }
@@ -558,7 +617,7 @@ export function App() {
     setActiveTab(uploadAsset ? "composed" : "original");
 
     try {
-      const originalResponse = await requestJson<{ job: JobRecord }>("/api/jobs", {
+      const originalResponse = await requestJson<JobCreateResponse>("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -570,13 +629,15 @@ export function App() {
           mock: runMode === "mock"
         })
       });
+      applyCreditCharge(originalResponse);
       setOriginalJob(originalResponse.job);
       const finalOriginal = await pollJob(originalResponse.job.id, setOriginalJob);
+      await refreshCredits();
       if (finalOriginal.status === "failed") throw new Error(finalOriginal.error || "广告原图生成失败");
       void requestTextValidation(finalOriginal, true);
 
       if (uploadAsset) {
-        const composedResponse = await requestJson<{ job: JobRecord }>("/api/jobs", {
+        const composedResponse = await requestJson<JobCreateResponse>("/api/jobs", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -589,8 +650,10 @@ export function App() {
             mock: runMode === "mock"
           })
         });
+        applyCreditCharge(composedResponse);
         setComposedJob(composedResponse.job);
         const finalComposed = await pollJob(composedResponse.job.id, setComposedJob);
+        await refreshCredits();
         if (finalComposed.status === "failed") throw new Error(finalComposed.error || "环境效果图生成失败");
         void requestTextValidation(finalComposed, true);
       }
@@ -606,7 +669,9 @@ export function App() {
       });
       setVectorAsset(vectorResponse.asset);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成失败");
+      const message = err instanceof Error ? err.message : "生成失败";
+      setError(message);
+      if (message.includes("积分不足")) setCreditDrawerOpen(true);
     } finally {
       setBusy(false);
     }
@@ -615,13 +680,13 @@ export function App() {
   async function handleLogout() {
     await requestJson("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     setAuthUser(null);
-    setActiveView("canvas");
+    setCreditDrawerOpen(false);
   }
 
   if (authLoading) {
     return <div className="auth-loading" role="status"><Loader2 className="spin" size={24} /><span>正在连接广告工作台</span></div>;
   }
-  if (!authUser) return <LoginView onLogin={setAuthUser} />;
+  if (!authUser) return <LoginView onLogin={(user) => { setAuthUser(user); setCreditBalance(user.creditBalance); }} />;
 
   return (
     <div className="app-shell">
@@ -631,23 +696,17 @@ export function App() {
           <span>AdCraft AI 广告工作台</span>
         </div>
         <div className="topbar-right">
-          <nav className="nav">
-            <button className={activeView === "canvas" ? "active" : ""} onClick={() => setActiveView("canvas")}>首页生成</button>
-            {authUser.role === "admin" ? <button className={activeView === "users" ? "active" : ""} onClick={() => setActiveView("users")}>用户管理</button> : null}
-          </nav>
-          <div className="account-menu"><span className="account-avatar">{authUser.nickname.slice(0, 1)}</span><div><strong>{authUser.nickname}</strong><small>{authUser.creditBalance} 积分</small></div><button title="退出登录" onClick={() => void handleLogout()}><LogOut size={17} /></button></div>
+          {authUser.role === "admin" ? <a className="admin-entry-link" href={appUrl("/admin/")}><Settings2 size={16} />管理后台</a> : null}
+          <button className={`canvas-credit-badge ${creditPulse}`} onClick={() => setCreditDrawerOpen(true)}><Coins size={17} /><span><strong>{creditBalance.toLocaleString()}</strong><small>积分{estimatedCreditCost ? ` · 本次约 ${estimatedCreditCost}` : ""}</small></span></button>
+          <div className="account-menu"><span className="account-avatar">{authUser.nickname.slice(0, 1)}</span><div><strong>{authUser.nickname}</strong><small>{authUser.role === "admin" ? "管理员" : authUser.role === "designer" ? "设计师" : "审稿员"}</small></div><button title="退出登录" onClick={() => void handleLogout()}><LogOut size={17} /></button></div>
         </div>
       </header>
 
       <div className="layout">
         <aside className="rail">
-          <button className={activeView === "canvas" ? "active" : ""} onClick={() => setActiveView("canvas")}>画布</button>
-          {authUser.role === "admin" ? <button className={activeView === "users" ? "active" : ""} onClick={() => setActiveView("users")}><Users size={17} />用户</button> : null}
+          <button className="active">画布</button>
         </aside>
 
-        {activeView === "users" && authUser.role === "admin" ? (
-          <main className="main admin-main"><AdminUsers currentUserId={authUser.id} /></main>
-        ) : (
         <main className="main">
           <section className="workspace">
             <div className="left-pane">
@@ -944,8 +1003,9 @@ export function App() {
             </aside>
           </section>
         </main>
-        )}
       </div>
+
+      <CreditDrawer key={authUser.id} open={creditDrawerOpen} onClose={() => setCreditDrawerOpen(false)} initialBalance={creditBalance} onBalanceChange={setCreditBalance} />
 
       {imageModalOpen && selectedImage && (
         <div className="image-modal" role="dialog" aria-modal="true" aria-label="生成结果大图" onClick={() => setImageModalOpen(false)}>
@@ -966,4 +1026,8 @@ export function App() {
       )}
     </div>
   );
+}
+
+export function App() {
+  return /\/admin(?:\/|$)/.test(window.location.pathname) ? <AdminApp /> : <CanvasApp />;
 }

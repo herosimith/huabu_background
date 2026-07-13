@@ -8,10 +8,12 @@ import { cleanupStaleJobs } from "./services/jobService.js";
 import { bootstrapAdmin } from "./services/authService.js";
 import { canAccessOwner, requireAuth } from "./middleware/auth.js";
 import { store } from "./store/jsonStore.js";
+import { ensureDefaultCreditRule } from "./services/creditService.js";
 
 await ensureDir(config.dataDir);
 await ensureDir(config.storageDir);
 await bootstrapAdmin();
+await ensureDefaultCreditRule();
 await cleanupStaleJobs();
 
 const app = express();

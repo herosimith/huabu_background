@@ -6,6 +6,33 @@ export type TextValidationStatus = "pending" | "passed" | "needs_review" | "unav
 export type UserRole = "admin" | "designer" | "reviewer";
 export type UserStatus = "active" | "disabled";
 export type CreditTransactionType = "initial" | "admin_adjust" | "generation" | "refund";
+export type TopupIntentStatus = "pending" | "closed";
+
+export interface CreditCosts {
+  standardGeneration: number;
+  highQualitySurcharge: number;
+  highResolutionSurcharge: number;
+}
+
+export interface CreditRuleRecord {
+  id: string;
+  version: number;
+  active: boolean;
+  signupGrant: number;
+  costs: CreditCosts;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface TopupIntentRecord {
+  id: string;
+  userId: string;
+  requestedCredits: number;
+  status: TopupIntentStatus;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface UserRecord {
   id: string;
@@ -138,6 +165,7 @@ export interface JobRecord {
   correctedAssets?: AssetRecord[];
   mock?: boolean;
   creditsConsumed?: number;
+  creditRuleVersion?: number;
   creditsRefundedAt?: string;
   providerTaskId?: string;
   requestJson?: unknown;
@@ -156,6 +184,8 @@ export interface DatabaseShape {
   assets: AssetRecord[];
   users: UserRecord[];
   creditTransactions: CreditTransactionRecord[];
+  creditRules: CreditRuleRecord[];
+  topupIntents: TopupIntentRecord[];
 }
 
 export interface ImageProviderInput {
