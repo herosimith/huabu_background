@@ -17,6 +17,7 @@ interface CreateJobInput {
   model?: string;
   inputAssetIds?: string[];
   mock?: boolean;
+  userId: string;
 }
 
 function outputTypeForJob(type: JobType): AssetRecord["type"] {
@@ -59,17 +60,19 @@ async function executeJob(jobId: string): Promise<void> {
           type: outputTypeForJob(job.type),
           url: result.image.value,
           jobId: job.id,
-          promptId: job.promptId
+          promptId: job.promptId,
+          userId: job.userId
         })
         : await saveBase64ImageAsset({
           type: outputTypeForJob(job.type),
           b64: result.image.value,
           mimeType: result.image.mimeType,
           jobId: job.id,
-          promptId: job.promptId
+          promptId: job.promptId,
+          userId: job.userId
         });
     } catch (error) {
-      await store.saveJob({
+      await store.saveFailedJobAndRefund({
         ...job,
         status: "failed",
         providerTaskId: result.providerTaskId,
@@ -93,7 +96,7 @@ async function executeJob(jobId: string): Promise<void> {
       updatedAt: nowIso()
     });
   } catch (error) {
-    await store.saveJob({
+    await store.saveFailedJobAndRefund({
       ...job,
       status: "failed",
       error: errorMessage(error),
@@ -111,6 +114,7 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
   if (input.promptId) {
     const promptRecord = await store.getPrompt(input.promptId);
     if (!promptRecord) throw new HttpError(404, "promptId not found");
+    if (promptRecord.userId && promptRecord.userId !== input.userId) throw new HttpError(403, "promptId belongs to another user");
     prompt ||= promptRecord.imagePrompt;
     negativePrompt ||= promptRecord.negativePrompt;
     requiredVisibleTexts = promptRecord.requiredVisibleTexts || [];
@@ -132,13 +136,21 @@ export async function createJob(input: CreateJobInput): Promise<JobRecord> {
     quality: input.quality || config.image.quality,
     model: input.model || config.image.model,
     inputAssetIds: input.inputAssetIds || [],
+    userId: input.userId,
     requiredVisibleTexts,
     mock: Boolean(input.mock),
     assets: [],
     createdAt: now,
     updatedAt: now
   };
-  await store.saveJob(job);
+  const creditCost = job.mock ? 0 : config.auth.generatedJobCost;
+  try {
+    await store.createJobForUser(job, creditCost);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Insufficient credits") throw new HttpError(409, "积分不足，无法开始真实生图");
+    if (error instanceof Error && error.message === "Active user not found") throw new HttpError(401, "账号不可用");
+    throw error;
+  }
   void executeJob(job.id);
   return job;
 }
@@ -147,7 +159,7 @@ export async function cleanupStaleJobs(): Promise<void> {
   const jobs = await store.listJobs();
   await Promise.all(jobs
     .filter((job) => job.status === "queued" || job.status === "running")
-    .map((job) => store.saveJob({
+    .map((job) => store.saveFailedJobAndRefund({
       ...job,
       status: "failed",
       error: "Server restarted before this job completed",

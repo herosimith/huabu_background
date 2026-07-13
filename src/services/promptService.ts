@@ -11,6 +11,7 @@ interface PromptInput {
   material?: string;
   style?: string;
   requiredVisibleTexts?: string[];
+  userId?: string;
 }
 
 interface TimelineRow {
@@ -422,6 +423,7 @@ export async function createPrompt(input: PromptInput): Promise<PromptRecord> {
   const record: PromptRecord = {
     id: `prompt_${nanoid(12)}`,
     ...promptBase,
+    userId: input.userId,
     createdAt: nowIso()
   };
   await store.savePrompt(record);

@@ -1,5 +1,8 @@
-import { AlertTriangle, CheckCircle2, Copy, Download, Expand, Eye, EyeOff, ImagePlus, Loader2, Palette, RotateCcw, ScanText, Send, Sparkles, Type, Upload, Wand2, X } from "lucide-react";
-import { ChangeEvent, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Copy, Download, Expand, Eye, EyeOff, ImagePlus, Loader2, LogOut, Palette, RotateCcw, ScanText, Send, Sparkles, Type, Upload, Users, Wand2, X } from "lucide-react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { AdminUsers } from "./AdminUsers";
+import { appUrl, requestJson } from "./api";
+import { AuthUser, LoginView } from "./LoginView";
 
 type JobStatus = "queued" | "running" | "succeeded" | "failed";
 type JobType = "original" | "composed";
@@ -129,23 +132,6 @@ const imageQualityOptions = [
 
 const defaultNeed = "给一家服装工作室设计门头，店名“不晚 STUDIO”，白色墙面，黑色发光字，风格高级、干净，适合夜间亮灯展示。";
 
-const appBase = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-function appUrl(path: string): string {
-  if (/^(?:blob:|data:|https?:)/i.test(path)) return path;
-  return `${appBase}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(appUrl(path), init);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = body?.error?.message || `HTTP ${response.status}`;
-    throw new Error(message);
-  }
-  return body as T;
-}
-
 async function pollJob(id: string, onUpdate: (job: JobRecord) => void): Promise<JobRecord> {
   const deadline = Date.now() + 720_000;
   for (;;) {
@@ -239,6 +225,9 @@ function GenerationLoading({ title, detail }: { title: string; detail: string })
 }
 
 export function App() {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [activeView, setActiveView] = useState<"canvas" | "users">("canvas");
   const [customerText, setCustomerText] = useState(defaultNeed);
   const [requiredVisibleTextInput, setRequiredVisibleTextInput] = useState("");
   const [businessType, setBusinessType] = useState("门头招牌");
@@ -265,6 +254,13 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    void requestJson<{ user: AuthUser }>("/api/auth/me")
+      .then((response) => setAuthUser(response.user))
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthLoading(false));
+  }, []);
+
   const steps: StepState[] = useMemo(() => [
     { label: "AE 需求整理", detail: prompt ? "已生成标准 brief" : "把客户口述转成标准 brief", state: prompt ? "done" : busy ? "working" : "idle" },
     { label: "策略判断", detail: "行业、客群、风格与预算", state: prompt ? "done" : "idle" },
@@ -284,7 +280,7 @@ export function App() {
   const showingCorrectedImage = Boolean(activeImageJob?.correctedAssets?.length) && !showSourceImage;
   const visibleTextChecks = textValidation?.checks || (activeImageJob?.requiredVisibleTexts || []).map((expectedText) => ({ expectedText, matched: false }));
   const storeName = useMemo(() => extractStoreName(customerText), [customerText]);
-  const canGenerate = !busy && !uploading && Boolean(customerText.trim());
+  const canGenerate = authUser?.role !== "reviewer" && !busy && !uploading && Boolean(customerText.trim());
   const jobPrompt = polishedPromptText?.trim() || undefined;
   const generationLoading = useMemo(() => {
     if (!prompt) {
@@ -616,6 +612,17 @@ export function App() {
     }
   }
 
+  async function handleLogout() {
+    await requestJson("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    setAuthUser(null);
+    setActiveView("canvas");
+  }
+
+  if (authLoading) {
+    return <div className="auth-loading" role="status"><Loader2 className="spin" size={24} /><span>正在连接广告工作台</span></div>;
+  }
+  if (!authUser) return <LoginView onLogin={setAuthUser} />;
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -623,21 +630,24 @@ export function App() {
           <div className="mark">A</div>
           <span>AdCraft AI 广告工作台</span>
         </div>
-        <nav className="nav">
-          <button className="active">首页生成</button>
-          <button>模板库</button>
-          <button>工作流库</button>
-          <button>案例库</button>
-        </nav>
+        <div className="topbar-right">
+          <nav className="nav">
+            <button className={activeView === "canvas" ? "active" : ""} onClick={() => setActiveView("canvas")}>首页生成</button>
+            {authUser.role === "admin" ? <button className={activeView === "users" ? "active" : ""} onClick={() => setActiveView("users")}>用户管理</button> : null}
+          </nav>
+          <div className="account-menu"><span className="account-avatar">{authUser.nickname.slice(0, 1)}</span><div><strong>{authUser.nickname}</strong><small>{authUser.creditBalance} 积分</small></div><button title="退出登录" onClick={() => void handleLogout()}><LogOut size={17} /></button></div>
+        </div>
       </header>
 
       <div className="layout">
         <aside className="rail">
-          {["首页", "项目", "画布", "导出", "客服"].map((item, index) => (
-            <button key={item} className={index === 0 ? "active" : ""}>{item}</button>
-          ))}
+          <button className={activeView === "canvas" ? "active" : ""} onClick={() => setActiveView("canvas")}>画布</button>
+          {authUser.role === "admin" ? <button className={activeView === "users" ? "active" : ""} onClick={() => setActiveView("users")}><Users size={17} />用户</button> : null}
         </aside>
 
+        {activeView === "users" && authUser.role === "admin" ? (
+          <main className="main admin-main"><AdminUsers currentUserId={authUser.id} /></main>
+        ) : (
         <main className="main">
           <section className="workspace">
             <div className="left-pane">
@@ -786,7 +796,7 @@ export function App() {
                 <label className="upload-button">
                   <Upload size={18} />
                   {uploading ? "上传中" : "选择图片"}
-                  <input data-testid="upload" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleUpload} disabled={busy || uploading} />
+                  <input data-testid="upload" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleUpload} disabled={authUser.role === "reviewer" || busy || uploading} />
                 </label>
               </div>
 
@@ -934,6 +944,7 @@ export function App() {
             </aside>
           </section>
         </main>
+        )}
       </div>
 
       {imageModalOpen && selectedImage && (

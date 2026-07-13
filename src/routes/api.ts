@@ -10,6 +10,9 @@ import { createPrompt } from "../services/promptService.js";
 import { resolvePromptLibraryImage } from "../services/promptLibrary.js";
 import { applyTextCorrections } from "../services/textCorrectionService.js";
 import { validateJobText } from "../services/textValidationService.js";
+import { authRouter } from "./auth.js";
+import { adminRouter } from "./admin.js";
+import { canAccessOwner, requireAuth, requireCanvasEditor } from "../middleware/auth.js";
 
 const allowedJobTypes = new Set(["original", "composed"]);
 const allowedImageQualities = new Set(["low", "medium", "high", "auto"]);
@@ -33,7 +36,11 @@ apiRouter.get("/health", (_req, res) => {
   });
 });
 
-apiRouter.post("/prompt", async (req, res, next) => {
+apiRouter.use("/auth", authRouter);
+apiRouter.use("/admin", adminRouter);
+apiRouter.use(requireAuth);
+
+apiRouter.post("/prompt", requireCanvasEditor, async (req, res, next) => {
   try {
     const customerText = String(req.body.customerText || "").trim();
     if (!customerText) throw new HttpError(400, "customerText is required");
@@ -44,7 +51,8 @@ apiRouter.post("/prompt", async (req, res, next) => {
       style: req.body.style,
       requiredVisibleTexts: Array.isArray(req.body.requiredVisibleTexts)
         ? req.body.requiredVisibleTexts.map((value: unknown) => String(value || ""))
-        : undefined
+        : undefined,
+      userId: req.authUser!.id
     });
     res.json({ prompt });
   } catch (error) {
@@ -56,6 +64,7 @@ apiRouter.get("/prompts/:id", async (req, res, next) => {
   try {
     const prompt = await store.getPrompt(req.params.id);
     if (!prompt) throw new HttpError(404, "Prompt not found");
+    if (!canAccessOwner(req, prompt.userId)) throw new HttpError(403, "无权访问此提示词");
     res.json({ prompt });
   } catch (error) {
     next(error);
@@ -73,7 +82,7 @@ apiRouter.get("/prompt-library/images/:filename", async (req, res, next) => {
   }
 });
 
-apiRouter.post("/uploads", upload.single("file"), async (req, res, next) => {
+apiRouter.post("/uploads", requireCanvasEditor, upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) throw new HttpError(400, "file is required");
     if (!allowedUploadTypes.has(req.file.mimetype)) {
@@ -83,7 +92,8 @@ apiRouter.post("/uploads", upload.single("file"), async (req, res, next) => {
       type: "upload",
       buffer: req.file.buffer,
       mimeType: req.file.mimetype || "application/octet-stream",
-      filename: req.file.originalname
+      filename: req.file.originalname,
+      userId: req.authUser!.id
     });
     res.json({ asset });
   } catch (error) {
@@ -95,13 +105,14 @@ apiRouter.get("/assets/:id", async (req, res, next) => {
   try {
     const asset = await store.getAsset(req.params.id);
     if (!asset) throw new HttpError(404, "Asset not found");
+    if (!canAccessOwner(req, asset.userId)) throw new HttpError(403, "无权访问此素材");
     res.json({ asset });
   } catch (error) {
     next(error);
   }
 });
 
-apiRouter.post("/jobs", async (req, res, next) => {
+apiRouter.post("/jobs", requireCanvasEditor, async (req, res, next) => {
   try {
     const type = String(req.body.type || "");
     if (!allowedJobTypes.has(type)) {
@@ -126,6 +137,7 @@ apiRouter.post("/jobs", async (req, res, next) => {
       if (assets.length !== inputAssetIds.length) {
         throw new HttpError(400, "one or more inputAssetIds were not found");
       }
+      if (assets.some((asset) => !canAccessOwner(req, asset.userId))) throw new HttpError(403, "无权使用一个或多个素材");
     }
     const job = await createJob({
       type,
@@ -136,7 +148,8 @@ apiRouter.post("/jobs", async (req, res, next) => {
       quality,
       model: req.body.model,
       inputAssetIds,
-      mock
+      mock,
+      userId: req.authUser!.id
     });
     res.status(202).json({ job });
   } catch (error) {
@@ -146,18 +159,20 @@ apiRouter.post("/jobs", async (req, res, next) => {
 
 apiRouter.get("/jobs/:id", async (req, res, next) => {
   try {
-    const job = await store.getJob(req.params.id);
+    const job = await store.getJob(String(req.params.id));
     if (!job) throw new HttpError(404, "Job not found");
+    if (!canAccessOwner(req, job.userId)) throw new HttpError(403, "无权访问此任务");
     res.json({ job });
   } catch (error) {
     next(error);
   }
 });
 
-apiRouter.post("/jobs/:id/text-validation", async (req, res, next) => {
+apiRouter.post("/jobs/:id/text-validation", requireCanvasEditor, async (req, res, next) => {
   try {
-    const job = await store.getJob(req.params.id);
+    const job = await store.getJob(String(req.params.id));
     if (!job) throw new HttpError(404, "Job not found");
+    if (!canAccessOwner(req, job.userId)) throw new HttpError(403, "无权访问此任务");
     if (job.status !== "succeeded") throw new HttpError(409, "Text validation requires a completed job");
     const textValidation = await validateJobText(job);
     const updatedJob = await store.saveJob({ ...job, textValidation, updatedAt: new Date().toISOString() });
@@ -167,10 +182,11 @@ apiRouter.post("/jobs/:id/text-validation", async (req, res, next) => {
   }
 });
 
-apiRouter.post("/jobs/:id/text-corrections", async (req, res, next) => {
+apiRouter.post("/jobs/:id/text-corrections", requireCanvasEditor, async (req, res, next) => {
   try {
-    const job = await store.getJob(req.params.id);
+    const job = await store.getJob(String(req.params.id));
     if (!job) throw new HttpError(404, "Job not found");
+    if (!canAccessOwner(req, job.userId)) throw new HttpError(403, "无权访问此任务");
     if (job.status !== "succeeded") throw new HttpError(409, "Text correction requires a completed job");
     const sourceAsset = job.assets.find((asset) => asset.type === job.type);
     if (!sourceAsset) throw new HttpError(409, "Job has no correctable source asset");
@@ -188,19 +204,28 @@ apiRouter.post("/jobs/:id/text-corrections", async (req, res, next) => {
   }
 });
 
-apiRouter.post("/vector-assets", async (req, res, next) => {
+apiRouter.post("/vector-assets", requireCanvasEditor, async (req, res, next) => {
   try {
     const svg = String(req.body.svg || "").trim();
     if (!svg.startsWith("<svg")) throw new HttpError(400, "svg is required");
     if (/<script[\s>]/i.test(svg) || /\son[a-z]+\s*=/i.test(svg) || /javascript:/i.test(svg)) {
       throw new HttpError(400, "svg contains unsafe content");
     }
+    if (req.body.jobId) {
+      const job = await store.getJob(String(req.body.jobId));
+      if (!job || !canAccessOwner(req, job.userId)) throw new HttpError(403, "无权关联此任务");
+    }
+    if (req.body.promptId) {
+      const prompt = await store.getPrompt(String(req.body.promptId));
+      if (!prompt || !canAccessOwner(req, prompt.userId)) throw new HttpError(403, "无权关联此提示词");
+    }
     const asset = await saveBufferAsset({
       type: "vector",
       buffer: Buffer.from(svg, "utf8"),
       mimeType: "image/svg+xml",
       jobId: req.body.jobId,
-      promptId: req.body.promptId
+      promptId: req.body.promptId,
+      userId: req.authUser!.id
     });
     res.json({ asset });
   } catch (error) {

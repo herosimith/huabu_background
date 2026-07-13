@@ -1,7 +1,16 @@
 const baseUrl = process.env.ADCRAFT_BASE_URL || "http://127.0.0.1:5173";
+let sessionCookie = "";
+
+function authenticatedInit(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (sessionCookie) headers.set("cookie", sessionCookie);
+  return { ...init, headers };
+}
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const response = await fetch(`${baseUrl}${path}`, authenticatedInit(init));
+  const setCookie = response.headers.get("set-cookie");
+  if (setCookie) sessionCookie = setCookie.split(";", 1)[0];
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${JSON.stringify(body)}`);
@@ -10,7 +19,7 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function expectStatus(path: string, expectedStatus: number, init?: RequestInit): Promise<void> {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const response = await fetch(`${baseUrl}${path}`, authenticatedInit(init));
   if (response.status !== expectedStatus) {
     const body = await response.text();
     throw new Error(`${path} expected ${expectedStatus}, received ${response.status}: ${body}`);
@@ -29,6 +38,14 @@ async function pollJob(id: string): Promise<any> {
 
 const health = await json<{ ok: boolean; mode: string }>("/api/health");
 if (!health.ok) throw new Error("Health check failed");
+await json("/api/auth/login", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    email: process.env.ADMIN_BOOTSTRAP_EMAIL,
+    password: process.env.ADMIN_BOOTSTRAP_PASSWORD
+  })
+});
 if (health.mode === "mock") {
   await expectStatus("/api/jobs", 503, {
     method: "POST",
@@ -186,7 +203,7 @@ const { asset: corrected, job: correctedJob } = await json<{ asset: { type: stri
 if (corrected.type !== "corrected" || !corrected.url || !correctedJob.correctedAssets?.length || !correctedJob.assets?.[0]?.url) {
   throw new Error("Text correction did not create a separate corrected asset while preserving the original");
 }
-const correctedImage = await fetch(`${baseUrl}${corrected.url}`);
+const correctedImage = await fetch(`${baseUrl}${corrected.url}`, authenticatedInit());
 if (!correctedImage.ok || !correctedImage.headers.get("content-type")?.includes("image/png")) {
   throw new Error("Corrected asset is not a readable PNG");
 }

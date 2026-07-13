@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import crypto from "node:crypto";
 
 dotenv.config();
 
@@ -21,11 +22,31 @@ function localServiceUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+function authSecret(): string {
+  const value = process.env.AUTH_SECRET || "";
+  if (value && value.length < 32) throw new Error("AUTH_SECRET must contain at least 32 characters");
+  if (process.env.NODE_ENV === "production" && !value) {
+    throw new Error("AUTH_SECRET is required in production");
+  }
+  if (!value) console.warn("AUTH_SECRET is not set; using an ephemeral development secret");
+  return value || crypto.randomBytes(32).toString("hex");
+}
+
 export const config = {
   rootDir,
+  host: process.env.HOST || "127.0.0.1",
   port: numberEnv("PORT", 4177),
-  dataDir: path.join(rootDir, "data"),
-  storageDir: path.join(rootDir, "storage"),
+  dataDir: path.resolve(process.env.DATA_DIR || path.join(rootDir, "data")),
+  storageDir: path.resolve(process.env.STORAGE_DIR || path.join(rootDir, "storage")),
+  auth: {
+    secret: authSecret(),
+    cookieName: "adcraft_session",
+    sessionHours: numberEnv("AUTH_SESSION_HOURS", 24),
+    bootstrapEmail: (process.env.ADMIN_BOOTSTRAP_EMAIL || "").trim().toLowerCase(),
+    bootstrapPassword: process.env.ADMIN_BOOTSTRAP_PASSWORD || "",
+    bootstrapNickname: (process.env.ADMIN_BOOTSTRAP_NICKNAME || "系统管理员").trim(),
+    generatedJobCost: numberEnv("GENERATION_CREDIT_COST", 1)
+  },
   promptLibrary: {
     dir: path.join(rootDir, "assets", "prompt-library"),
     dataPath: path.join(rootDir, "assets", "prompt-library", "data.full.json"),

@@ -3,6 +3,36 @@ export type JobType = "original" | "composed";
 export type AssetType = "upload" | "original" | "composed" | "vector" | "corrected";
 export type PromptSource = "template" | "openai-chat" | "anthropic";
 export type TextValidationStatus = "pending" | "passed" | "needs_review" | "unavailable";
+export type UserRole = "admin" | "designer" | "reviewer";
+export type UserStatus = "active" | "disabled";
+export type CreditTransactionType = "initial" | "admin_adjust" | "generation" | "refund";
+
+export interface UserRecord {
+  id: string;
+  nickname: string;
+  email: string;
+  phone?: string;
+  passwordHash: string;
+  role: UserRole;
+  status: UserStatus;
+  creditBalance: number;
+  generationCount: number;
+  lastActiveAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditTransactionRecord {
+  id: string;
+  userId: string;
+  type: CreditTransactionType;
+  amount: number;
+  balanceAfter: number;
+  reason: string;
+  operatorId?: string;
+  relatedJobId?: string;
+  createdAt: string;
+}
 
 export interface TextPoint {
   x: number;
@@ -72,6 +102,7 @@ export interface PromptRecord {
   source: PromptSource;
   matchedPromptIds?: string[];
   matchedPrompts?: MatchedPromptSummary[];
+  userId?: string;
   createdAt: string;
 }
 
@@ -85,6 +116,7 @@ export interface AssetRecord {
   size: number;
   jobId?: string;
   promptId?: string;
+  userId?: string;
   createdAt: string;
 }
 
@@ -93,6 +125,7 @@ export interface JobRecord {
   type: JobType;
   status: JobStatus;
   promptId?: string;
+  userId?: string;
   prompt: string;
   negativePrompt?: string;
   size: string;
@@ -104,6 +137,8 @@ export interface JobRecord {
   textCorrections?: TextCorrection[];
   correctedAssets?: AssetRecord[];
   mock?: boolean;
+  creditsConsumed?: number;
+  creditsRefundedAt?: string;
   providerTaskId?: string;
   requestJson?: unknown;
   responseJson?: unknown;
@@ -119,6 +154,8 @@ export interface DatabaseShape {
   prompts: PromptRecord[];
   jobs: JobRecord[];
   assets: AssetRecord[];
+  users: UserRecord[];
+  creditTransactions: CreditTransactionRecord[];
 }
 
 export interface ImageProviderInput {

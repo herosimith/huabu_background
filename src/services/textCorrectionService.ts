@@ -144,7 +144,8 @@ async function apply(input: ApplyTextCorrectionsInput): Promise<ApplyTextCorrect
     buffer,
     mimeType: "image/png",
     jobId: job.id,
-    promptId: job.promptId
+    promptId: job.promptId,
+    userId: job.userId
   });
   return { asset, corrections };
 }

@@ -26,6 +26,7 @@ export async function saveBufferAsset(params: {
   mimeType: string;
   jobId?: string;
   promptId?: string;
+  userId?: string;
   filename?: string;
 }): Promise<AssetRecord> {
   const id = `asset_${nanoid(12)}`;
@@ -47,6 +48,7 @@ export async function saveBufferAsset(params: {
     size: params.buffer.length,
     jobId: params.jobId,
     promptId: params.promptId,
+    userId: params.userId,
     createdAt: nowIso()
   };
   await store.saveAsset(record);
@@ -58,6 +60,7 @@ export async function saveRemoteImageAsset(params: {
   url: string;
   jobId?: string;
   promptId?: string;
+  userId?: string;
 }): Promise<AssetRecord> {
   const response = await fetch(params.url);
   if (!response.ok) {
@@ -70,7 +73,8 @@ export async function saveRemoteImageAsset(params: {
     buffer,
     mimeType,
     jobId: params.jobId,
-    promptId: params.promptId
+    promptId: params.promptId,
+    userId: params.userId
   });
 }
 
@@ -80,6 +84,7 @@ export async function saveBase64ImageAsset(params: {
   mimeType?: string;
   jobId?: string;
   promptId?: string;
+  userId?: string;
 }): Promise<AssetRecord> {
   const clean = params.b64.includes(",") ? params.b64.split(",", 2)[1] : params.b64;
   return saveBufferAsset({
@@ -87,6 +92,7 @@ export async function saveBase64ImageAsset(params: {
     buffer: Buffer.from(clean, "base64"),
     mimeType: params.mimeType || "image/png",
     jobId: params.jobId,
-    promptId: params.promptId
+    promptId: params.promptId,
+    userId: params.userId
   });
 }
